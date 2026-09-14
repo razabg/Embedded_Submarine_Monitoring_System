@@ -139,6 +139,20 @@ FRESULT SDFatFS_ForEachLine(const char *filename, SDFatFS_LineCallback cb, void 
             line[--len] = '\0';
         }
         cb(line, ctx);
+
+        /* Give lower-priority tasks (Monitor, Keep-Alive, Object
+         * Detection -- all osPriorityNormal, below comm_rx_task's
+         * osPriorityAboveNormal) a real chance to run between lines on
+         * a long query, instead of comm_rx_task holding the CPU for
+         * the whole scan. osDelay (not osThreadYield) is required here:
+         * osThreadYield only hands off to same-priority tasks, it can
+         * never let a lower-priority one run. s_sd_lock stays held
+         * across this delay -- the file handle stays open for the
+         * whole scan, so any other task needing the SD card (e.g.
+         * Monitor's log_write()) still waits its turn, it just isn't
+         * starved of CPU time to do its non-SD work (sensor sampling)
+         * in the meantime. See CLAUDE.md / watchdog.c. */
+        osDelay(1);
     }
 
     f_close(&s_fil);

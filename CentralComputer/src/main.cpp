@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -126,9 +127,20 @@ static std::string describe_frame(const tlv_frame_t &f)
  * child PID doesn't correspond to the actual window anyway). */
 static void launch_log_window()
 {
+    /* gnome-terminal is a thin client: under WSLg it hands this command
+     * to a persistent gnome-terminal-server process over D-Bus, which
+     * spawns the actual shell in ITS OWN cwd, not ours -- so a relative
+     * LIVE_LOG_PATH ("logs/live.log") can resolve against the wrong
+     * directory and make `tail` fail instantly with "No such file or
+     * directory", leaving a dead pane behind a window that never
+     * renders (observed: blank gray window, no tail/gnome-terminal
+     * process actually running). Resolving to an absolute path here
+     * removes the dependency on whatever directory that server process
+     * happens to be in. */
+    std::string abs_log_path = std::filesystem::absolute(LIVE_LOG_PATH).string();
     std::string cmd = "gnome-terminal --title 'Central Computer -- live log' -- "
                        "bash -c 'tail -f --pid=" +
-                       std::to_string(getpid()) + " " + LIVE_LOG_PATH + "' &";
+                       std::to_string(getpid()) + " " + abs_log_path + "' &";
     /* The trailing '&' backgrounds gnome-terminal, so this return
      * value only reflects whether the shell itself launched -- not
      * whether gnome-terminal actually succeeded (e.g. no DISPLAY);
