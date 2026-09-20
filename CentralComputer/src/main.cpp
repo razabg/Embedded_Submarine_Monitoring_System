@@ -39,12 +39,19 @@
 
 #include "communication.h"
 #include "data_collection_analysis.h"
+#include "gs_link_server.h"
 #include "log.h"
 #include "management_command.h"
 #include "serial_transport.h"
 #include "tcp_transport.h"
 
 static const char *LIVE_LOG_PATH = "logs/live.log";
+
+/* GroundStation connects here (see GsLinkServer/CLAUDE.md) -- separate
+ * from the LNC-gateway's own default port (5555), since a real
+ * deployment could have both a gateway and this listener alive on the
+ * same machine at once. */
+static constexpr uint16_t GS_LINK_PORT = 6000;
 
 /* ===============================================================
  * Human-readable frame descriptions -- reuses the exact payload
@@ -561,6 +568,15 @@ int main(int argc, char **argv)
     try {
         Log log("logs/central_computer");
         DataCollectionAnalysis dca("data/central_computer.db");
+
+        /* GsLinkServer holds DataCollectionAnalysis& (not owned) and
+         * starts a background thread that may call into it at any
+         * time -- declared AFTER dca so it's destroyed BEFORE dca
+         * during stack unwind (C++ destroys locals in reverse
+         * declaration order). Reversing this order would let dca's
+         * destructor run while gs_link's accept-loop thread could
+         * still be mid-query against it -- a use-after-free. */
+        GsLinkServer gs_link(dca, GS_LINK_PORT);
 
         /* truncate, not append -- this file is a live view, not a
          * permanent record (DataCollectionAnalysis's db is that). */

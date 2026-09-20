@@ -27,7 +27,7 @@
 static constexpr long kReceiveTimeoutUsec = 100000;
 
 TcpTransport::TcpTransport(std::string host, uint16_t port)
-    : host_(std::move(host)), port_(port) /* host_: the gateway's address,
+    : host_(std::move(host)), port_(port) /* host_: the server's address,
                                             * "127.0.0.1" in this project --
                                             * a hostname would also work,
                                             * getaddrinfo() below can
@@ -135,7 +135,7 @@ long TcpTransport::read(uint8_t *buf, size_t len)
             return static_cast<long>(n);
         }
         if (n == 0) {
-            /* The gateway closed the connection -- a real disconnect,
+            /* The far end closed the connection -- a real disconnect,
              * not "nothing arrived yet". Unlike a serial port's read
              * timeout, recv() returning 0 specifically means orderly
              * shutdown. Treat as an error so rx_loop() reconnects,

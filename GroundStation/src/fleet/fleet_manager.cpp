@@ -12,10 +12,13 @@ bool FleetManager::addResearchSubmarine(std::string serialNumber, std::string na
     return true;
 }
 
-bool FleetManager::addCombatSubmarine(std::string serialNumber, std::string name)
+bool FleetManager::addCombatSubmarine(std::string serialNumber, std::string name,
+                                       std::string centralComputerHost, uint16_t centralComputerPort)
 {
     if (serialNumber.empty() || name.empty() || hasSerial(serialNumber)) return false;
-    submarines_.push_back(std::make_unique<CombatSubmarine>(std::move(serialNumber), std::move(name)));
+    submarines_.push_back(std::make_unique<CombatSubmarine>(std::move(serialNumber), std::move(name),
+                                                              std::move(centralComputerHost),
+                                                              centralComputerPort));
     return true;
 }
 

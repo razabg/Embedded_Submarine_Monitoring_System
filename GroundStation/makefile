@@ -5,17 +5,21 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O2 -g
+CC       ?= gcc
+CFLAGS   ?= -std=c11 -Wall -Wextra -O2 -g
 
+TLV_DIR   = ../Shared/ProtocolTLV
+NET_DIR   = ../Shared/Net
 FLEET_DIR = src/fleet
 COMM_DIR  = src/communication
 
-INCLUDES = -I$(FLEET_DIR) -I$(COMM_DIR)
+INCLUDES = -I$(TLV_DIR) -I$(NET_DIR) -I$(FLEET_DIR) -I$(COMM_DIR)
 
 BUILD = build
 BIN   = $(BUILD)/ground_station
 OBJ   = $(BUILD)/main.o $(BUILD)/fleet_manager.o $(BUILD)/submarine.o $(BUILD)/research_submarine.o \
         $(BUILD)/combat_submarine.o $(BUILD)/mission.o $(BUILD)/message.o \
-        $(BUILD)/central_computer.o
+        $(BUILD)/central_computer.o $(BUILD)/tcp_transport.o $(BUILD)/tlv.o
 
 all: $(BIN)
 
@@ -46,8 +50,14 @@ $(BUILD)/mission.o: $(FLEET_DIR)/mission.cpp $(FLEET_DIR)/mission.h $(BUILD)
 $(BUILD)/message.o: $(FLEET_DIR)/message.cpp $(FLEET_DIR)/message.h $(FLEET_DIR)/submarine.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BUILD)/central_computer.o: $(COMM_DIR)/central_computer.cpp $(COMM_DIR)/central_computer.h $(BUILD)
+$(BUILD)/central_computer.o: $(COMM_DIR)/central_computer.cpp $(COMM_DIR)/central_computer.h $(NET_DIR)/tcp_transport.h $(TLV_DIR)/tlv.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD)/tcp_transport.o: $(NET_DIR)/tcp_transport.cpp $(NET_DIR)/tcp_transport.h $(NET_DIR)/transport.h $(BUILD)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(BUILD)/tlv.o: $(TLV_DIR)/tlv.c $(TLV_DIR)/tlv.h $(BUILD)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	rm -rf $(BUILD)

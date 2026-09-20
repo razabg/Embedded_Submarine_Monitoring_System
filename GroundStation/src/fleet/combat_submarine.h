@@ -13,6 +13,7 @@
 #ifndef COMBAT_SUBMARINE_H
 #define COMBAT_SUBMARINE_H
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,7 +26,12 @@
 class CombatSubmarine : public Submarine
 {
 public:
-    CombatSubmarine(std::string serialNumber, std::string name);
+    /* centralComputerHost/Port: where this submarine's real Central
+     * Computer listens for the GroundStation link (GsLinkServer,
+     * CentralComputer/src/gsLink/) -- not necessarily reachable at
+     * add-mission time, just where to try later. */
+    CombatSubmarine(std::string serialNumber, std::string name,
+                     std::string centralComputerHost, uint16_t centralComputerPort);
 
     SubmarineType type() const override { return SubmarineType::Combat; }
     std::string describe() const override;

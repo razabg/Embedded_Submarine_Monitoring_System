@@ -89,7 +89,7 @@ Communication *communication_create(void)
     g_comm.txq_high = osMessageQueueNew(1, sizeof(comm_tx_item_t), NULL);
     g_comm.txq_med = osMessageQueueNew(4, sizeof(comm_tx_item_t), NULL);
     g_comm.txq_low = osMessageQueueNew(4, sizeof(comm_tx_item_t), NULL);
-    g_comm.sem_tx_ready = osSemaphoreNew(10, 0, NULL);
+    g_comm.sem_tx_ready = osSemaphoreNew(10, 0, NULL); //high + med + low
     g_comm.rxq_bytes = osMessageQueueNew(128, sizeof(uint8_t), NULL);
 
     if (g_comm.txq_high == NULL || g_comm.txq_med == NULL || g_comm.txq_low == NULL ||

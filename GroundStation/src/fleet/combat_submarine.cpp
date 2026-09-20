@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <sstream>
 
-CombatSubmarine::CombatSubmarine(std::string serialNumber, std::string name)
-    : Submarine(std::move(serialNumber), std::move(name)), centralComputer_(std::make_unique<CentralComputer>())
+CombatSubmarine::CombatSubmarine(std::string serialNumber, std::string name,
+                                  std::string centralComputerHost, uint16_t centralComputerPort)
+    : Submarine(std::move(serialNumber), std::move(name)),
+      centralComputer_(std::make_unique<CentralComputer>(std::move(centralComputerHost), centralComputerPort))
 {
 }
 

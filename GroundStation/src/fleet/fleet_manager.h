@@ -7,6 +7,7 @@
 #ifndef FLEET_MANAGER_H
 #define FLEET_MANAGER_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -26,7 +27,10 @@ public:
     /* False (nothing added) if serialNumber/name is empty or
      * serialNumber is already used by another submarine. */
     bool addResearchSubmarine(std::string serialNumber, std::string name);
-    bool addCombatSubmarine(std::string serialNumber, std::string name);
+
+    /* centralComputerHost/Port: see combat_submarine.h. */
+    bool addCombatSubmarine(std::string serialNumber, std::string name, std::string centralComputerHost,
+                             uint16_t centralComputerPort);
 
     const std::vector<std::unique_ptr<Submarine>> &submarines() const { return submarines_; }
 

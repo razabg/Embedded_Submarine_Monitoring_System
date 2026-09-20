@@ -4,6 +4,7 @@
  * parameters into the fleet classes -- no class ever reads input
  * itself (course rule).
  */
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -74,8 +75,17 @@ static void do_add_submarine(FleetManager &fleet)
     if (!read_line("  serial number: ", serialNumber)) return;
     if (!read_line("  name: ", name)) return;
 
-    bool added = (typeChoice == 1) ? fleet.addResearchSubmarine(serialNumber, name)
-                                    : fleet.addCombatSubmarine(serialNumber, name);
+    bool added;
+    if (typeChoice == 1) {
+        added = fleet.addResearchSubmarine(serialNumber, name);
+    } else {
+        std::string centralComputerHost;
+        int centralComputerPort;
+        if (!read_line("  central computer host (e.g. 127.0.0.1): ", centralComputerHost)) return;
+        if (!read_int("  central computer port: ", 1, 65535, centralComputerPort)) return;
+        added = fleet.addCombatSubmarine(serialNumber, name, centralComputerHost,
+                                          static_cast<uint16_t>(centralComputerPort));
+    }
     std::cout << (added ? "added\n" : "rejected (empty field, or serial number already in use)\n");
 }
 
@@ -231,6 +241,46 @@ static void do_show_messages(const FleetManager &fleet)
     }
 }
 
+/* Queries a combat submarine's real Central Computer for stored
+ * logs/events over Ethernet (section 4) -- not one of the spec's
+ * fixed 10 menu options, added as an explicit 11th item rather than
+ * folded into an existing one (see the chat that decided this). Same
+ * start/end + 1/2/3 kind-choice UX as Central Computer's own "Query
+ * LNC's SD card directly" menu option, for consistency across the
+ * whole system. */
+static void do_query_central_computer(FleetManager &fleet)
+{
+    std::string serialNumber;
+    if (!read_line("  combat submarine serial number: ", serialNumber)) return;
+
+    CombatSubmarine *sub = fleet.findCombatSubmarine(serialNumber);
+    if (sub == nullptr) {
+        std::cout << "not found, or not a combat submarine\n";
+        return;
+    }
+
+    std::string start, end;
+    if (!read_line("  start (YYYY-MM-DD HH:MM:SS): ", start)) return;
+    if (!read_line("  end   (YYYY-MM-DD HH:MM:SS): ", end)) return;
+
+    int kindChoice;
+    std::cout << " 1) Measurements\n 2) Events\n 3) Both\n";
+    if (!read_int("> ", 1, 3, kindChoice)) return;
+
+    if (kindChoice == 1 || kindChoice == 3) {
+        std::cout << "-- measurements --\n";
+        for (const auto &line : sub->centralComputer().queryLogs(start, end)) {
+            std::cout << "  " << line << "\n";
+        }
+    }
+    if (kindChoice == 2 || kindChoice == 3) {
+        std::cout << "-- events --\n";
+        for (const auto &line : sub->centralComputer().queryEvents(start, end)) {
+            std::cout << "  " << line << "\n";
+        }
+    }
+}
+
 /* ===============================================================
  * Menu loop
  * =============================================================== */
@@ -248,10 +298,11 @@ static void run_menu(FleetManager &fleet)
                      " 7) Link combat submarines to the same mission\n"
                      " 8) Send a message (combat submarines only)\n"
                      " 9) Show messages received by a submarine\n"
-                     "10) Exit\n";
+                     "10) Exit\n"
+                     "11) Query a combat submarine's Central Computer (logs/events)\n";
 
         int choice;
-        if (!read_int("> ", 1, 10, choice)) return;
+        if (!read_int("> ", 1, 11, choice)) return;
 
         switch (choice) {
         case 1: do_add_submarine(fleet); break;
@@ -264,6 +315,7 @@ static void run_menu(FleetManager &fleet)
         case 8: do_send_message(fleet); break;
         case 9: do_show_messages(fleet); break;
         case 10: return;
+        case 11: do_query_central_computer(fleet); break;
         default: break;
         }
     }
