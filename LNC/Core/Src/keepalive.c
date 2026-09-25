@@ -79,7 +79,7 @@ static void keepalive_task(void *argument)
                          (const uint8_t *)&payload, sizeof(payload));
 
         tick += KEEPALIVE_PERIOD_MS;
-        osDelayUntil(tick);
+        osDelayUntil(tick); /* == FreeRTOS vTaskDelayUntil() */
     }
 }
 

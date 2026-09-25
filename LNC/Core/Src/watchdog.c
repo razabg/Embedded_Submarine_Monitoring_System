@@ -36,7 +36,7 @@ static void watchdog_task(void *argument)
         HAL_IWDG_Refresh(&hiwdg);//refersh every 1 sec the 4 sec coountdown
 
         tick += WATCHDOG_REFRESH_MS;
-        osDelayUntil(tick);
+        osDelayUntil(tick); /* == FreeRTOS vTaskDelayUntil() */
     }
 }
 
@@ -46,10 +46,16 @@ static void watchdog_task(void *argument)
 
 Watchdog *watchdog_create(void)
 {
+    /* Above every other task in the firmware (Communication's TX/RX
+     * tasks included, at osPriorityAboveNormal) -- Watchdog's only job
+     * is to never miss a refresh, so it must never be starved by
+     * anything else, including a long-running SD-card scan (e.g.
+     * QUERY_DATA/QUERY_EVENTS in comm_rx_task -- see log.c/event.c and
+     * CLAUDE.md). */
     const osThreadAttr_t task_attr = {
         .name = "watchdogTask",
         .stack_size = 256 * 4,
-        .priority = osPriorityNormal,
+        .priority = osPriorityHigh,
     };
 
     g_watchdog.task_handle = osThreadNew(watchdog_task, NULL, &task_attr);

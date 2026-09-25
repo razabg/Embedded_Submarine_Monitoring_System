@@ -194,7 +194,7 @@ Init *init_create(Communication *comm)
     if (log_create(comm) == NULL) {
         return NULL;
     }
-    if (config_create() == NULL) {
+    if (config_create(comm) == NULL) {
         return NULL;
     }
     if (monitor_create() == NULL) {

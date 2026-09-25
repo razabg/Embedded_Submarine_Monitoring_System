@@ -115,13 +115,13 @@ void objdet_on_edge(void) //called form HAL_GPIO_EXTI_Callback() in events.c
     __HAL_TIM_SET_COUNTER(&htim5, 0);
 
     if (!g_objdet.present) {
-        (void)osThreadFlagsSet(g_objdet.task_handle, OBJDET_FLAG_EDGE);
+        (void)osThreadFlagsSet(g_objdet.task_handle, OBJDET_FLAG_EDGE); /* ISR context: == FreeRTOS xTaskNotifyFromISR() */
     }
 }
 
 void objdet_on_timeout(void) //called form HAL_TIM_PeriodElapsedCallback() in buzzer.c
 {
-    (void)osThreadFlagsSet(g_objdet.task_handle, OBJDET_FLAG_TIMEOUT);
+    (void)osThreadFlagsSet(g_objdet.task_handle, OBJDET_FLAG_TIMEOUT); /* ISR context: == FreeRTOS xTaskNotifyFromISR() */
 }
 
 /* ===============================================================
@@ -135,7 +135,7 @@ static void objdet_task(void *argument)
 
     for (;;) {
         uint32_t flags = osThreadFlagsWait(OBJDET_FLAG_EDGE | OBJDET_FLAG_TIMEOUT,
-                                            osFlagsWaitAny, osWaitForever);
+                                            osFlagsWaitAny, osWaitForever); /* == FreeRTOS xTaskNotifyWait() */
 
         if ((flags & OBJDET_FLAG_EDGE) && !g_objdet.present) {
             g_objdet.present = true;

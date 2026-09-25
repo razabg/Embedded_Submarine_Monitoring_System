@@ -1,11 +1,20 @@
 /*
  * tcp_transport.h - Transport implementation over a TCP client socket.
  *
- * Used when Ethernet is the chosen transport, in place of
- * SerialTransport -- see CLAUDE.md's "Ethernet-simulation gateway" note.
- * Connects to the gateway (the TCP server; this class is always the
- * client) at construction, RAII-style like SerialPort: constructor
- * connects, destructor closes, no separate open()/close() to remember.
+ * Always the CLIENT side -- who the server is depends on which link
+ * this object is used for:
+ *   - CentralComputer, talking to the LNC-simulation gateway (the
+ *     gateway owns the real serial port, so it's the server -- see
+ *     CLAUDE.md's "Ethernet-simulation gateway" note).
+ *   - GroundStation, talking to a submarine's CentralComputer (this
+ *     time CentralComputer is the server -- opposite direction from
+ *     the link above, same reusable client code, just pointed at a
+ *     different address).
+ * Lives in Shared/ for exactly that reason: two separate programs, in
+ * two separate client/server relationships, both need it.
+ *
+ * RAII-style like SerialPort: constructor connects, destructor closes,
+ * no separate open()/close() to remember.
  *
  * Knows nothing about TLV, messages, or commands -- same as SerialPort,
  * it only moves bytes.
@@ -21,7 +30,7 @@ class TcpTransport : public Transport
 {
 public:
     /*
-     * Connects to host:port immediately (the gateway's listening
+     * Connects to host:port immediately (the server's listening
      * address). Throws std::system_error on failure -- if this
      * constructor returns normally, the connection is open and ready
      * to use.

@@ -1,48 +1,81 @@
-# LNC peripheral & timer allocation
+# LNC Embedded System — Summary
 
-Snapshot as of 2026-09-06 (branch `objectDetection`). Update this file
-whenever a peripheral gets claimed or freed — check it before picking a
-timer/peripheral for a new module instead of assigning one ad hoc.
+Snapshot as of 2026-09-09. What's actually in the firmware: peripherals,
+pins, FreeRTOS architecture, and protocols. See `CLAUDE.md` section 9 for
+the full design rationale behind each choice.
 
-## Timers
+## 1. Peripherals & pins
 
-| Timer | Owner | What it does | Config |
+| Peripheral | Pin(s) | Sensor / purpose | Notes |
 |---|---|---|---|
-| `TIM2` | DHT11 (Monitor), read-only by Object Detection | Free-running 1µs counter for DHT11 bit-bang timing; Object Detection reads it (doesn't reset it) for edge-speed rejection | Prescaler=79 → 1MHz, Period=max (32-bit) |
-| `TIM3` | Buzzer (Event) | PWM tone (`CH1`/`PB4`) + its own update-IT drives note/duration timing for both the alarm siren and sonar ping | Prescaler=79 → 1MHz, per-note Period/Pulse |
-| `TIM5` | Object Detection | Base timer + IT only (no PWM) — 10s presence-timeout countdown, reset on confirmed edges | Prescaler=7999, Period=99999 → 10.000s @ 10kHz |
-| `TIM6` | **nobody (reserved)** | CubeMX-initialized but not `extern`'d in `main.h`, not touched by any module — earmarked as Object Detection's future dedicated timer (to stop sharing `TIM2` with DHT11), never actually wired up | Prescaler=0, Period=65535 (CubeMX defaults, untuned) |
-| `TIM8` | SonarLed (Event) | PWM only (`CH4`/`PC9`), no interrupt — breathing red LED, duty nudged from a task every 30ms | Prescaler=7, Period=999 → 10kHz |
-| `TIM1`, `TIM4`, `TIM7`, `TIM15`, `TIM16`, `TIM17`, `LPTIM1/2` | — | Not configured in CubeMX at all | fully free |
+| `ADC1` | `PA0` | Battery (potentiometer) | 12-bit, on-demand poll, Monitor only |
+| `ADC2` | `PA1` | Light (LDR) | 8-bit, on-demand poll, Monitor only |
+| `PB5` (bit-banged) | `PB5` | Temp + humidity (DHT11) | Single-wire, `TIM2` for µs timing |
+| EXTI (`PB10`) | `PB10` | IR receiver (VS1838B) — Object Detection stand-in | Both-edge, shared `EXTI15_10` line |
+| EXTI (`PB3`) | `PB3` | Stop-alarm button | Own vector; debounced in software (50ms tick compare) |
+| `I2C3` | `PC0`(SCL)/`PC1`(SDA) | DS1307 external RTC | Durable time source, synced to internal RTC at boot + on time sync |
+| `RTC` (internal) | — | All runtime timestamps | Working clock; `LSI`-derived (known drift issue, `LSE` not enabled) |
+| `SPI1` | `PA5`/`PA6`/`PA7`, CS `PB6` | SD card (FatFS) | Log files + `EVENTS.TXT` |
+| `USART2` | `PA2`(TX)/`PA3`(RX) | Communication (Central Computer link) | Only module allowed to touch it |
+| `IWDG` | — | Watchdog | ~4.1s timeout, 1s refresh |
+| Flash (last page, bank 2) | — | Configuration persistence | Loaded at boot; defaults written if empty |
+| RGB LED | `PB13`(R)/`PB14`(B)/`PB15`(G) | Mode-status LED | Plain GPIO, no PWM |
 
-Monitor, Keep-Alive, and Watchdog's refresh all use `osDelayUntil` in
-their own task loop instead of a hardware timer (CLAUDE.md section 9) —
-none of the three general-purpose-timer-free periodic tasks need one.
+### Timers
 
-## Other peripherals
+| Timer | Owner | Role | Config |
+|---|---|---|---|
+| `TIM2` | DHT11 (read by Object Detection too) | Free-running 1µs counter | Prescaler=79 → 1MHz |
+| `TIM3` | Buzzer | PWM tone (`CH1`/`PB4`) + note timing via its own update-IT | Alarm siren + sonar ping, per-note Period/Pulse |
+| `TIM5` | Object Detection | Base+IT, 10s presence-timeout countdown | Prescaler=7999, Period=99999 → 10.000s |
+| `TIM8` | SonarLed | PWM only (`CH4`/`PC9`), breathing red LED | Duty nudged from task every 30ms, no IT |
+| `TIM6` | — | Reserved, unused | Init'd by CubeMX, never wired up |
 
-| Peripheral | Owner | Notes |
+Monitor / Keep-Alive / Watchdog use `osDelayUntil` in their own task loop
+instead of a hardware timer — no peripheral needed for periodic timing.
+
+## 2. FreeRTOS architecture
+
+**8 threads created, 7 real.** `StartDefaultTask` is CubeMX's unused
+default stub (`osDelay(1)` forever). Event, Log, Configuration, and Init
+have **no task of their own** — they run as plain function calls on
+whichever task invokes them (Init runs in `main()` before
+`osKernelStart()`; Event/Log run inside Monitor's, Object Detection's, or
+Communication's task).
+
+| Task | Module | Trigger | Stack | Priority |
+|---|---|---|---|---|
+| `monitor_task` | Monitor | `osDelayUntil`, 5s | 4096 B | Normal |
+| `comm_tx_task` | Communication | Semaphore-gated send loop | 1024 B | AboveNormal |
+| `comm_rx_task` | Communication | Byte queue, blocking | 4096 B | AboveNormal |
+| `objdet_task` | Object Detection | Task flags (EXTI/timer ISR) | 4096 B | Normal |
+| `sonarled_task` | Event (SonarLed) | `osDelayUntil`, 30ms | 1024 B | Normal |
+| `keepalive_task` | Keep-Alive | `osDelayUntil`, 6s | 2048 B | Normal |
+| `watchdog_task` | Watchdog | `osDelayUntil`, 1s | 1024 B | Normal |
+
+### Synchronization / IPC tools
+
+| Tool | Used? | Where / why |
 |---|---|---|
-| `ADC1` | Monitor | Battery voltage, `PA0`, 12-bit, on-demand poll |
-| `ADC2` | Monitor | Light, `PA1`, 8-bit, on-demand poll |
-| `I2C3` | Init/RTC sync | DS1307 external RTC, `PC0`(SCL)/`PC1`(SDA) |
-| `SPI1` | Log/Event (FatFS) | SD card, CS on `PB6` |
-| `USART2` | *contested* | Reserved exclusively for Communication per the transport rule, but Communication is still stubbed out (`communication_create()` commented out in `main.c`) — right now `printf` (via `syscalls.c`) is borrowing it for debug output. Once Communication is un-stubbed, that has to stop — only Communication may touch `huart2`. |
-| `RTC` (internal) | Monitor/Event/Log timestamps | Currently clocked from `LSI` (poor accuracy, ~±5%, source of a known drift issue) — `LSE` is pin-locked (`PC14`/`PC15`) but not yet enabled in `RCC_OscInitStruct`/`RTCClockSelection` |
-| `IWDG` | Watchdog | Refresh-only from software (`watchdog.c`, `osDelayUntil` every 1000ms) — `HAL_IWDG_Init()` (in CubeMX-generated `MX_IWDG_Init()`) both configures and starts the countdown, before `osKernelStart()` even runs. Activated: `Prescaler=32`, `Reload=4095`, `Window=4095` (window disabled — plain refresh-anytime behavior) → timeout ≈ 4.096s, comfortably above the 1000ms refresh period. Hardware-confirmed working (`4a2d0c2`, "watchdog working"). `init.c` separately reads the passive `RCC_FLAG_IWDGRST` reset-cause flag, which needs no IWDG setup and works regardless. |
-| EXTI | Event | `PB10` (line 10, shared `EXTI15_10`) = IR receiver; `PB3` (line 3, own vector) = button. No other lines used. |
+| Message queues | **Yes** (4) | Communication: `txq_high`(1)/`txq_med`(4)/`txq_low`(4) — the keep-alive>events>data priority scheme; `rxq_bytes`(128) — decouples UART ISR from `comm_rx_task` |
+| Counting semaphore | **Yes** (1) | `sem_tx_ready` — wakes `comm_tx_task` when any queue gets an item |
+| Mutex | **Yes** (2) | `g_monitor.latest_lock` — guards Monitor's cross-task latest-reading cache (read by Keep-Alive); `s_sd_lock` — guards `sdfatfs.c`'s shared FatFS state (now called from multiple tasks) |
+| Task notifications (`osThreadFlags`) | **Yes** | Object Detection only — `OBJDET_FLAG_EDGE`/`OBJDET_FLAG_TIMEOUT`, set from the EXTI and `TIM5` ISRs, woken in `objdet_task` (ISR can't touch the SD card itself) |
+| Event flags (`osEventFlags`) | No | — |
+| Software timers (`osTimer`) | No | Object Detection's presence timeout was originally planned as one; ended up as a dedicated hardware timer (`TIM5`) + task notification instead |
 
-## Plain GPIO
+**ISR discipline:** every ISR/HAL callback does the minimum (clear flag,
+enqueue, or set a task flag) — no SD-card access or protocol logic ever
+runs in interrupt context. Exception that's still safe: the button's
+`event_button_pressed()` runs directly in the shared `HAL_GPIO_EXTI_Callback`,
+but it only stops the buzzer (register writes) — no blocking, no SD access.
 
-RGB status LED `PB13`(red)/`PB14`(blue)/`PB15`(green), DHT11 `PB5`,
-SD-CS `PB6`. `PA10` (`BUTTON_D2`) is defined in `main.h` but unused —
-the real stop-alarm button ended up on `PB3` instead, due to the
-EXTI-line-10 conflict with the IR sensor on `PB10` (same pin *number*
-can't be a live EXTI source on two ports at once).
+## 3. Protocols
 
-## What's free for upcoming modules
-
-- **Keep-Alive**: needs nothing from this table — per the already-decided
-  design it's pure `osDelayUntil`, no timer, no new peripheral.
-- **Watchdog**: needs `IWDG`, completely untouched so far, no conflict
-  with anything above.
+| Link | Protocol | Notes |
+|---|---|---|
+| LNC ↔ Central Computer | **TLV** over UART (115200 8N1) | `Shared/ProtocolTLV`; byte-streamed via `tlv_receiver_feed_byte()` |
+| LNC ↔ DS1307 | I2C (master) | `HAL_I2C_Master_Transmit/Receive`, blocking |
+| LNC ↔ SD card | SPI | FatFS `user_diskio_spi.c`, blocking transfers |
+| LNC ↔ DHT11 | Single-wire, bit-banged | No hardware protocol peripheral — polled via `TIM2` |
+| IR remote → Object Detection | Heuristic edge-timing filter, not real NEC decode | Speed rejection + burst confirmation (see `CLAUDE.md` section 7) |

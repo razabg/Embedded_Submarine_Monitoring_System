@@ -52,7 +52,7 @@ static void sonarled_task(void *argument)
         }
 
         tick += TICK_MS;
-        osDelayUntil(tick);
+        osDelayUntil(tick); /* == FreeRTOS vTaskDelayUntil() */
     }
 }
 

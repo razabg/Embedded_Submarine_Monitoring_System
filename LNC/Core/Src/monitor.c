@@ -124,12 +124,17 @@ static sensor_tier_t classify_lower_bound(int32_t value, int32_t normal_min, int
 
 static monitor_mode_t classify_mode(const monitor_measurement_t *data)
 {
-    const config_limits_t *limits = config_get_limits();
-    sensor_tier_t temp  = classify_range(data->temp_c, limits->temp_normal_min, limits->temp_normal_max,
-                                          limits->temp_warning_min, limits->temp_warning_max);
-    sensor_tier_t hum   = classify_lower_bound(data->humidity_pct, limits->humidity_normal_min, limits->humidity_warning_min);
-    sensor_tier_t light = classify_lower_bound(data->light_pct, limits->light_normal_min, limits->light_warning_min);
-    sensor_tier_t batt  = classify_lower_bound(data->battery_pct, limits->battery_normal_min, limits->battery_warning_min);
+//    /* By value, not a pointer to live state -- config_get_limits()
+//     * copies out under Configuration's own lock, so this snapshot
+//     * can't be torn by a SET_*///GET_CONFIG landing mid-read (see
+//     //* config.h).
+
+    config_limits_t limits = config_get_limits();
+    sensor_tier_t temp  = classify_range(data->temp_c, limits.temp_normal_min, limits.temp_normal_max,
+                                          limits.temp_warning_min, limits.temp_warning_max);
+    sensor_tier_t hum   = classify_lower_bound(data->humidity_pct, limits.humidity_normal_min, limits.humidity_warning_min);
+    sensor_tier_t light = classify_lower_bound(data->light_pct, limits.light_normal_min, limits.light_warning_min);
+    sensor_tier_t batt  = classify_lower_bound(data->battery_pct, limits.battery_normal_min, limits.battery_warning_min);
 
     if (temp == TIER_ERROR || hum == TIER_ERROR || light == TIER_ERROR || batt == TIER_ERROR) {
         return MODE_ERROR;
@@ -240,7 +245,7 @@ static void monitor_task(void *argument)
         osMutexRelease(self->latest_lock);
 
         tick += 5000U;
-        osDelayUntil(tick);
+        osDelayUntil(tick); /* == FreeRTOS vTaskDelayUntil() */
     }
 }
 

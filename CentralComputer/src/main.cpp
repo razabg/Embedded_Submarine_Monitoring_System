@@ -28,21 +28,30 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <unistd.h>
 
 #include "communication.h"
 #include "data_collection_analysis.h"
+#include "gs_link_server.h"
 #include "log.h"
 #include "management_command.h"
 #include "serial_transport.h"
 #include "tcp_transport.h"
 
 static const char *LIVE_LOG_PATH = "logs/live.log";
+
+/* GroundStation connects here (see GsLinkServer/CLAUDE.md) -- separate
+ * from the LNC-gateway's own default port (5555), since a real
+ * deployment could have both a gateway and this listener alive on the
+ * same machine at once. */
+static constexpr uint16_t GS_LINK_PORT = 6000;
 
 /* ===============================================================
  * Human-readable frame descriptions -- reuses the exact payload
@@ -125,9 +134,20 @@ static std::string describe_frame(const tlv_frame_t &f)
  * child PID doesn't correspond to the actual window anyway). */
 static void launch_log_window()
 {
+    /* gnome-terminal is a thin client: under WSLg it hands this command
+     * to a persistent gnome-terminal-server process over D-Bus, which
+     * spawns the actual shell in ITS OWN cwd, not ours -- so a relative
+     * LIVE_LOG_PATH ("logs/live.log") can resolve against the wrong
+     * directory and make `tail` fail instantly with "No such file or
+     * directory", leaving a dead pane behind a window that never
+     * renders (observed: blank gray window, no tail/gnome-terminal
+     * process actually running). Resolving to an absolute path here
+     * removes the dependency on whatever directory that server process
+     * happens to be in. */
+    std::string abs_log_path = std::filesystem::absolute(LIVE_LOG_PATH).string();
     std::string cmd = "gnome-terminal --title 'Central Computer -- live log' -- "
                        "bash -c 'tail -f --pid=" +
-                       std::to_string(getpid()) + " " + LIVE_LOG_PATH + "' &";
+                       std::to_string(getpid()) + " " + abs_log_path + "' &";
     /* The trailing '&' backgrounds gnome-terminal, so this return
      * value only reflects whether the shell itself launched -- not
      * whether gnome-terminal actually succeeded (e.g. no DISPLAY);
@@ -194,6 +214,7 @@ static Connection connect_uart(const std::string &path, DataCollectionAnalysis &
         dca.on_frame(f);
     });
     c.mgmt = std::make_unique<ManagementCommand>(*c.comm, log); /* self-registers */
+    c.mgmt->get_config(); /* blocks briefly so the menu's first draw already shows real limits, not "?" */
     c.description = "uart " + path;
     return c;
 }
@@ -210,6 +231,7 @@ static Connection connect_tcp(const std::string &host, uint16_t port, DataCollec
         dca.on_frame(f);
     });
     c.mgmt = std::make_unique<ManagementCommand>(*c.comm, log);
+    c.mgmt->get_config(); /* blocks briefly so the menu's first draw already shows real limits, not "?" */
     c.description = "tcp " + host + ":" + std::to_string(port);
     return c;
 }
@@ -243,6 +265,46 @@ static bool read_line(const std::string &prompt, std::string &out)
 {
     std::cout << prompt;
     return static_cast<bool>(std::getline(std::cin >> std::ws, out));
+}
+
+/* Parses "YYYY-MM-DD HH:MM:SS" into the six wire fields
+ * query_range_payload_t needs (year as an offset from 2000, matching
+ * every other timestamp payload in this protocol). False on a
+ * malformed string or an out-of-range field -- nothing is written to
+ * the out-params in that case. */
+static bool parse_datetime(const std::string &s, uint8_t &year, uint8_t &month, uint8_t &date,
+                            uint8_t &hour, uint8_t &min, uint8_t &sec)
+{
+    int y, mo, d, h, mi, se;
+    if (std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
+    if (y < 2000 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 ||
+        mi > 59 || se < 0 || se > 59) {
+        return false;
+    }
+    year = static_cast<uint8_t>(y - 2000);
+    month = static_cast<uint8_t>(mo);
+    date = static_cast<uint8_t>(d);
+    hour = static_cast<uint8_t>(h);
+    min = static_cast<uint8_t>(mi);
+    sec = static_cast<uint8_t>(se);
+    return true;
+}
+
+/* One line summarizing the LNC's thresholds as ManagementCommand last
+ * heard them (see its class-level comment) -- "?" for any field never
+ * confirmed by a CONFIG_REPLY yet. Shown in the menu header so a SET_*
+ * change's effect is visible once refreshed (option 13), not just
+ * assumed sent. */
+static std::string format_thresholds(const ManagementCommand::Thresholds &t)
+{
+    auto i = [](auto opt) { return opt ? std::to_string(static_cast<int>(*opt)) : std::string("?"); };
+    std::ostringstream out;
+    out << "temp N[" << i(t.tempNormalMin) << "," << i(t.tempNormalMax) << "] W[" << i(t.tempWarningMin)
+        << "," << i(t.tempWarningMax) << "]"
+        << " | hum N>=" << i(t.humidityNormalMin) << " W>=" << i(t.humidityWarningMin)
+        << " | light N>=" << i(t.lightNormalMin) << " W>=" << i(t.lightWarningMin)
+        << " | batt N>=" << i(t.batteryNormalMin) << " W>=" << i(t.batteryWarningMin);
+    return out.str();
 }
 
 /* ===============================================================
@@ -325,6 +387,42 @@ static void do_get_time(ManagementCommand &mgmt)
 {
     mgmt.get_time();
     std::cout << "sent -- watch the live log window for the LNC's reply\n";
+}
+
+static void do_refresh_config(ManagementCommand &mgmt)
+{
+    std::cout << (mgmt.get_config() ? "refreshed -- see the limits line above\n"
+                                     : "no reply from the LNC within 1s -- check the connection\n");
+}
+
+/* Live query, straight from the LNC's own SD card -- distinct from
+ * options 2/3, which read this CC's own local database (populated
+ * passively from traffic already seen). This actually asks the LNC to
+ * search LOG1..7.TXT/EVENTS.TXT right now. Replies (QUERY_RECORD/
+ * QUERY_END) route through the log handler, not here -- see
+ * management_command.h -- so they show up in the live log window. */
+static void do_query_lnc_sd(ManagementCommand &mgmt)
+{
+    std::string startStr, endStr;
+    if (!read_line("  start (YYYY-MM-DD HH:MM:SS): ", startStr)) return;
+    if (!read_line("  end   (YYYY-MM-DD HH:MM:SS): ", endStr)) return;
+
+    query_range_payload_t range{};
+    if (!parse_datetime(startStr, range.start_year, range.start_month, range.start_date,
+                         range.start_hour, range.start_min, range.start_sec) ||
+        !parse_datetime(endStr, range.end_year, range.end_month, range.end_date, range.end_hour,
+                         range.end_min, range.end_sec)) {
+        std::cout << "bad date/time (expected YYYY-MM-DD HH:MM:SS, year 2000-2099)\n";
+        return;
+    }
+
+    int which;
+    std::cout << " 1) Measurements (QUERY_DATA)\n 2) Events (QUERY_EVENTS)\n 3) Both\n";
+    if (!read_int("> ", 1, 3, which)) return;
+
+    if (which == 1 || which == 3) mgmt.query_data(range);
+    if (which == 2 || which == 3) mgmt.query_events(range);
+    std::cout << "sent -- watch the live log window for the LNC's SD-card records\n";
 }
 
 static void show_measurements(DataCollectionAnalysis &dca)
@@ -411,8 +509,11 @@ static void switch_transport(Connection &conn, DataCollectionAnalysis &dca, Log 
 static void run_menu(Connection &conn, DataCollectionAnalysis &dca, Log &log, std::ofstream &live_log)
 {
     for (;;) {
-        std::cout << "\n===== Central Computer (" << conn.description << ") =====\n"
-                     " 1) Get LNC current time\n"
+        std::cout << "\n===== Central Computer (" << conn.description << ") =====\n";
+        if (conn.mgmt) {
+            std::cout << "limits: " << format_thresholds(conn.mgmt->thresholds()) << "\n";
+        }
+        std::cout << " 1) Get LNC current time\n"
                      " 2) Show stored measurements (time range)\n"
                      " 3) Show stored events (time range)\n"
                      " 4) Switch transport (UART / Ethernet)\n"
@@ -426,10 +527,13 @@ static void run_menu(Connection &conn, DataCollectionAnalysis &dca, Log &log, st
                      "11) Set battery normal bound\n"
                      "12) Set battery warning bound\n"
                      "\n"
+                     "13) Refresh limits from LNC (GET_CONFIG)\n"
+                     "14) Query LNC's SD card directly (time range)\n"
+                     "\n"
                      " 0) Quit\n";
 
         int choice;
-        if (!read_int("> ", 0, 12, choice)) {
+        if (!read_int("> ", 0, 14, choice)) {
             return;
         }
 
@@ -451,6 +555,8 @@ static void run_menu(Connection &conn, DataCollectionAnalysis &dca, Log &log, st
         case 10: set_light_warning(*conn.mgmt); break;
         case 11: set_battery_normal(*conn.mgmt); break;
         case 12: set_battery_warning(*conn.mgmt); break;
+        case 13: do_refresh_config(*conn.mgmt); break;
+        case 14: do_query_lnc_sd(*conn.mgmt); break;
         case 0: return;
         default: break;
         }
@@ -462,6 +568,15 @@ int main(int argc, char **argv)
     try {
         Log log("logs/central_computer");
         DataCollectionAnalysis dca("data/central_computer.db");
+
+        /* GsLinkServer holds DataCollectionAnalysis& (not owned) and
+         * starts a background thread that may call into it at any
+         * time -- declared AFTER dca so it's destroyed BEFORE dca
+         * during stack unwind (C++ destroys locals in reverse
+         * declaration order). Reversing this order would let dca's
+         * destructor run while gs_link's accept-loop thread could
+         * still be mid-query against it -- a use-after-free. */
+        GsLinkServer gs_link(dca, GS_LINK_PORT);
 
         /* truncate, not append -- this file is a live view, not a
          * permanent record (DataCollectionAnalysis's db is that). */

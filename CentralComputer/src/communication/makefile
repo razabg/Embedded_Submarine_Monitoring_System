@@ -4,9 +4,10 @@ CC       ?= gcc
 CFLAGS   ?= -std=c11 -Wall -Wextra -O2 -g
 
 TLV_DIR  = ../../../Shared/ProtocolTLV
+NET_DIR  = ../../../Shared/Net
 UART_DIR = ../uartTransport
 
-INCLUDES = -I$(TLV_DIR) -I$(UART_DIR)
+INCLUDES = -I$(TLV_DIR) -I$(NET_DIR) -I$(UART_DIR)
 
 BUILD = build
 BIN   = $(BUILD)/comm_test
@@ -21,16 +22,16 @@ $(BUILD):
 $(BIN): $(BUILD) $(OBJ)
 	$(CXX) $(CXXFLAGS) -o $(BIN) $(OBJ) -lpthread
 
-$(BUILD)/comm_test.o: comm_test.cpp communication.h serial_transport.h tcp_transport.h transport.h $(BUILD)
+$(BUILD)/comm_test.o: comm_test.cpp communication.h serial_transport.h $(NET_DIR)/tcp_transport.h $(NET_DIR)/transport.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BUILD)/communication.o: communication.cpp communication.h transport.h $(BUILD)
+$(BUILD)/communication.o: communication.cpp communication.h $(NET_DIR)/transport.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BUILD)/serial_transport.o: serial_transport.cpp serial_transport.h transport.h $(UART_DIR)/serial.h $(BUILD)
+$(BUILD)/serial_transport.o: serial_transport.cpp serial_transport.h $(NET_DIR)/transport.h $(UART_DIR)/serial.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BUILD)/tcp_transport.o: tcp_transport.cpp tcp_transport.h transport.h $(BUILD)
+$(BUILD)/tcp_transport.o: $(NET_DIR)/tcp_transport.cpp $(NET_DIR)/tcp_transport.h $(NET_DIR)/transport.h $(BUILD)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 $(BUILD)/serial.o: $(UART_DIR)/serial.cpp $(UART_DIR)/serial.h $(BUILD)

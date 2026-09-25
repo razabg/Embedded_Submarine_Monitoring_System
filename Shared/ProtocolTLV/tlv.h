@@ -118,6 +118,9 @@ extern "C"
                                             * above for that.               */
         TLV_TAG_TIME_SYNC_REPLY = 0x29,   /* CC's answer to Init's
                                             * TLV_TAG_TIME_SYNC_REQUEST      */
+        TLV_TAG_GET_CONFIG = 0x2A,       /* CC asks for the LNC's current
+                                            * thresholds -- answered by
+                                            * TLV_TAG_CONFIG_REPLY below.    */
 
         /* Central Computer -> LNC : queries */
         TLV_TAG_QUERY_DATA = 0x30,   /* measurements in a time range      */
@@ -129,6 +132,7 @@ extern "C"
         TLV_TAG_QUERY_END = 0x42,    /* no more records                   */
         TLV_TAG_ACK = 0x43,          /* command accepted                  */
         TLV_TAG_NACK = 0x44,         /* command rejected, reason in value */
+        TLV_TAG_CONFIG_REPLY = 0x45, /* LNC's answer to CC's GET_CONFIG   */
 
         /* Ground Station <-> Central Computer */
         TLV_TAG_GS_QUERY_DATA = 0x50,

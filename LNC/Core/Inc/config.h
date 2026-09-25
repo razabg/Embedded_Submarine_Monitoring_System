@@ -11,11 +11,16 @@
  *
  * ADT, matching monitor.c's/event.c's/log.c's/init.c's shape: opaque
  * handle, one static instance, create()/destroy().
+ *
+ * Also answers TLV_TAG_GET_CONFIG (CC asking for the current
+ * thresholds) with TLV_TAG_CONFIG_REPLY, so needs a Communication* to
+ * reply through -- same reason log_create()/event_create() take one.
  */
 #ifndef CONFIG_H
 #define CONFIG_H
 
 #include <stdint.h>
+#include "communication.h"
 #include "tlv.h"
 
 typedef struct Config Config;
@@ -38,14 +43,20 @@ typedef struct {
 /* Call once from main(). Loads from Flash, or defaults (and writes
  * them to Flash) on an empty/first-boot Flash page. Returns the
  * handle -- never NULL in practice, kept for ADT consistency. */
-Config *config_create(void);
+Config *config_create(Communication *comm);
 
 /* Provided for ADT completeness; not expected to be called in practice
  * on real hardware. Null-safe. */
 void config_destroy(Config *c);
 
-/* Current limits. Monitor calls this every 5 s round. */
-const config_limits_t *config_get_limits(void);
+///* Current limits, as a copy -- not a pointer to the live struct.
+// * configuration_on_frame() (SET_*/GET_CONFIG) runs on comm_rx_task and
+//// * mutates the real values field-by-field; Monitor reads them every 5 s
+//// * from its own task. A pointer into live state could hand Monitor a
+//// * torn mix of old and new fields if a SET_* lands mid-read; copying
+//// * the whole struct out under the internal lock avoids that (same
+//// * fix, same reason, as monitor.c's own monitor_get_latest()). */
+config_limits_t config_get_limits(void);
 
 /* Communication -> Configuration: one of the eight SET_* threshold
  * commands (section 2.5), or SET_TIME (handled the same way Init's

@@ -6,6 +6,7 @@
 #include "main.h"
 #include "event.h"
 #include "tlv.h"
+#include "cmsis_os.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -28,6 +29,8 @@ typedef struct __attribute__((packed)) {
 
 struct Config {
     config_limits_t limits;
+    Communication *comm;  /* to reply to TLV_TAG_GET_CONFIG */
+    osMutexId_t lock;      //* guards limits: comm_rx_task writes (SET_*/GET_CONFIG), monitor_task reads
 };
 
 static struct Config g_config;
@@ -136,6 +139,24 @@ typedef struct __attribute__((packed)) {
     uint8_t min;
 } bound_payload_t;
 
+/* Reply to TLV_TAG_GET_CONFIG -- field-for-field copy of
+ * config_limits_t, but explicitly packed for the wire (config_limits_t
+ * itself isn't) and duplicated here rather than reused, matching this
+ * codebase's convention for wire payloads (see CLAUDE.md's
+ * query_range_payload_t note). */
+typedef struct __attribute__((packed)) {
+    int16_t temp_normal_min;
+    int16_t temp_normal_max;
+    int16_t temp_warning_min;
+    int16_t temp_warning_max;
+    uint8_t humidity_normal_min;
+    uint8_t humidity_warning_min;
+    uint8_t light_normal_min;
+    uint8_t light_warning_min;
+    uint8_t battery_normal_min;
+    uint8_t battery_warning_min;
+} config_reply_payload_t;
+
 /* Every SET_* command ends the same way: persist the whole limits
  * struct (Flash can't rewrite just the one changed field -- see the
  * Flash I/O section above) and tell Event (section 2.3: events file
@@ -148,13 +169,27 @@ static void commit(const char *description)
 
 void configuration_on_frame(const tlv_frame_t *f)
 {
-    if (f == NULL || f->value == NULL) {
+    if (f == NULL) {
         return;
     }
 
+    /* GET_CONFIG carries no payload (f->value is NULL for it, same as
+     * any zero-length frame) -- checked per-case below instead of one
+     * blanket guard up front, so GET_CONFIG isn't rejected before it
+     * gets a chance to run. */
+
+//    /* Held across the whole switch, including commit()'s Flash/SD I/O:
+//     * simplest correct option, and cheap in practice -- SET_*/GET_CONFIG
+//     * are rare, operator-triggered commands, not a periodic path, so a
+//     * Monitor round occasionally waiting a few ms on this is fine. See
+//     * config.h's comment on config_get_limits() for why this exists at
+//     * all: without it, monitor_task() could read a torn mix of old and
+//     * new fields while a SET_* is applying. */
+    osMutexAcquire(g_config.lock, osWaitForever);
+
     switch (f->tag) {
     case TLV_TAG_SET_TEMP_NORMAL:
-        if (f->len == sizeof(temp_range_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(temp_range_payload_t)) {
             const temp_range_payload_t *p = (const temp_range_payload_t *)f->value;
             g_config.limits.temp_normal_min = p->min;
             g_config.limits.temp_normal_max = p->max;
@@ -163,7 +198,7 @@ void configuration_on_frame(const tlv_frame_t *f)
         break;
 
     case TLV_TAG_SET_TEMP_WARNING:
-        if (f->len == sizeof(temp_range_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(temp_range_payload_t)) {
             const temp_range_payload_t *p = (const temp_range_payload_t *)f->value;
             g_config.limits.temp_warning_min = p->min;
             g_config.limits.temp_warning_max = p->max;
@@ -172,58 +207,79 @@ void configuration_on_frame(const tlv_frame_t *f)
         break;
 
     case TLV_TAG_SET_HUM_NORMAL:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.humidity_normal_min = ((const bound_payload_t *)f->value)->min;
             commit("humidity normal bound");
         }
         break;
 
     case TLV_TAG_SET_HUM_WARNING:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.humidity_warning_min = ((const bound_payload_t *)f->value)->min;
             commit("humidity warning bound");
         }
         break;
 
     case TLV_TAG_SET_LIGHT_NORMAL:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.light_normal_min = ((const bound_payload_t *)f->value)->min;
             commit("light normal bound");
         }
         break;
 
     case TLV_TAG_SET_LIGHT_WARNING:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.light_warning_min = ((const bound_payload_t *)f->value)->min;
             commit("light warning bound");
         }
         break;
 
     case TLV_TAG_SET_BATT_NORMAL:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.battery_normal_min = ((const bound_payload_t *)f->value)->min;
             commit("battery normal bound");
         }
         break;
 
     case TLV_TAG_SET_BATT_WARNING:
-        if (f->len == sizeof(bound_payload_t)) {
+        if (f->value != NULL && f->len == sizeof(bound_payload_t)) {
             g_config.limits.battery_warning_min = ((const bound_payload_t *)f->value)->min;
             commit("battery warning bound");
         }
         break;
 
+    case TLV_TAG_GET_CONFIG: {
+        config_reply_payload_t reply;
+        reply.temp_normal_min = g_config.limits.temp_normal_min;
+        reply.temp_normal_max = g_config.limits.temp_normal_max;
+        reply.temp_warning_min = g_config.limits.temp_warning_min;
+        reply.temp_warning_max = g_config.limits.temp_warning_max;
+        reply.humidity_normal_min = g_config.limits.humidity_normal_min;
+        reply.humidity_warning_min = g_config.limits.humidity_warning_min;
+        reply.light_normal_min = g_config.limits.light_normal_min;
+        reply.light_warning_min = g_config.limits.light_warning_min;
+        reply.battery_normal_min = g_config.limits.battery_normal_min;
+        reply.battery_warning_min = g_config.limits.battery_warning_min;
+        (void)comm_send(g_config.comm, TLV_TAG_CONFIG_REPLY,
+                         (const uint8_t *)&reply, sizeof(reply));
+        break;
+    }
+
     default:
         break;
     }
+
+    osMutexRelease(g_config.lock);
 }
 
 /* ===============================================================
  * Public API: create / destroy / query
  * =============================================================== */
 
-Config *config_create(void)
+Config *config_create(Communication *comm)
 {
+    g_config.comm = comm;
+    g_config.lock = osMutexNew(NULL); /* == FreeRTOS xSemaphoreCreateMutex(). Created before osKernelStart(), same as Communication's and SDFatFS's own RTOS objects -- safe pre-scheduler, once osKernelInitialize() has run. */
     config_flash_load(&g_config.limits);
     return &g_config;
 }
@@ -233,7 +289,11 @@ void config_destroy(Config *c)
     (void)c;
 }
 
-const config_limits_t *config_get_limits(void)
+config_limits_t config_get_limits(void)
 {
-    return &g_config.limits;
+    config_limits_t copy;
+    osMutexAcquire(g_config.lock, osWaitForever);
+    copy = g_config.limits;
+    osMutexRelease(g_config.lock);
+    return copy;
 }

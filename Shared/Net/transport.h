@@ -10,11 +10,14 @@
  * decided once, by whoever constructs it -- not baked into
  * Communication's own code.
  *
- * Two real implementations: SerialTransport (serial_transport.h, wraps
- * SerialPort -- used when UART is chosen) and a TCP-based one (planned,
- * for the Ethernet-simulation gateway -- used when Ethernet is chosen).
- * Both satisfy the exact same three functions below, which is also
- * exactly what Communication's rx_loop()/send() already call today.
+ * Lives in Shared/ (not CentralComputer/) because TcpTransport
+ * (tcp_transport.h, the one concrete implementation that needs this
+ * interface) is used by two separate programs now: CentralComputer (as
+ * the client dialing the LNC-simulation gateway) and GroundStation (as
+ * the client dialing a submarine's CentralComputer). SerialTransport
+ * (CentralComputer/src/communication/serial_transport.h, wraps
+ * SerialPort -- used when UART is chosen) stays CentralComputer-only,
+ * since GroundStation never talks UART.
  */
 #ifndef TRANSPORT_H
 #define TRANSPORT_H

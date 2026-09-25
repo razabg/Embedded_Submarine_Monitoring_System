@@ -49,6 +49,8 @@ const char *tlv_tag_name(uint8_t tag)
         return "GET_TIME";
     case TLV_TAG_TIME_SYNC_REPLY:
         return "TIME_SYNC_REPLY";
+    case TLV_TAG_GET_CONFIG:
+        return "GET_CONFIG";
 
     case TLV_TAG_QUERY_DATA:
         return "QUERY_DATA";
@@ -65,6 +67,8 @@ const char *tlv_tag_name(uint8_t tag)
         return "ACK";
     case TLV_TAG_NACK:
         return "NACK";
+    case TLV_TAG_CONFIG_REPLY:
+        return "CONFIG_REPLY";
 
     case TLV_TAG_GS_QUERY_DATA:
         return "GS_QUERY_DATA";
